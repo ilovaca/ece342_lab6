@@ -1,19 +1,23 @@
-module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
+module proc (DIN, Resetn, Clock, Run, Done_out, BusOutput);
 	input [15:0] DIN;
 	input Resetn, Clock, Run;
-	output Done;
+	output Done_out;
 	output [15:0] BusOutput;
 	parameter MV = 3'd0, MVI = 3'd1, ADD = 3'd2, SUB = 3'd3; 
-
-	wire Clear;
-	assign Clear = Done;
-	wire ld_Ain, ld_IR, Tstep_Q, ld_G;
+	reg Done;
+	reg Clear;
+	assign Done_out = Done;
+	reg ld_A, ld_IR, ld_G, ld_EN, bus_reg_sel, bus_Gout_sel, bus_DIN_sel;
+	wire [1 : 0] Tstep_Q;
 	wire [2 : 0] Opcode, Rx, Ry;
-	wire [7 : 0] ld_R;
+	reg [7 : 0] ld_R;
 	wire [8 : 0] IR;
-	wire [15 : 0] Ain, ALU_out, G_out;
+	wire [15 : 0] Aout, ALU_out, G_out;
 	reg  [15 : 0] BusWires;
-
+	reg  [7 : 0] R_sel, ld_sel;
+	wire [15 : 0] R0, R1, R2, R3, R4, R5, R6, R7;
+	wire AddSub;
+	assign AddSub = (Opcode == ADD);
 	/********************** Counter for Counting Cycles *****************/
 	upcount Tstep (Clear, Clock, Tstep_Q);
 	/********************** Instruction Decoding ************************/
@@ -22,14 +26,14 @@ module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
 	dec3to8 decY (IR[2:0], 1'b1, Ry);
 
 	/********************** Control logic *******************************/
-	always @(Tstep_Q or Opcode or Rx or Ry)	
+	always @(*/*Tstep_Q or Opcode or Rx or Ry or Run or Resetn*/)	
 	begin
 		// . . . specify initial values
-		if (Resetn) begin
+		if (!Resetn) begin
 			Clear = 1;
 			ld_IR = 0;
 			ld_EN = 0;
-			ld_Ain = 0;
+			ld_A = 0;
 			ld_G = 0;
 			R_sel = 8'bxxxx_xxxx;
 			ld_sel = 8'bxxxx_xxxx;
@@ -38,124 +42,196 @@ module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
 			bus_DIN_sel = 0;
 			Done = 0;
 		end
-		else begin
+		else if(Run) begin
 			case (Tstep_Q)
 				2'b00: // store DIN in IR in time step 0
 					begin
 						Clear = 0;
 						ld_IR = 1;
 						ld_EN = 0;
-						ld_Ain = 0;
+						ld_A = 0;
 						ld_G = 0;
 						R_sel = 8'bxxxx_xxxx;
 						ld_sel = 8'bxxxx_xxxx;
 						bus_reg_sel = 0;
 						bus_Gout_sel = 0;
-						bus_DIN_sel = 1;
+						bus_DIN_sel = 0;
 						Done = 0;
 					end
-				2'b01: 
-					case (Opocde)
+				2'b01: // time step 1
+					case (Opcode)
 						MV: begin
+							Clear = 0;
 							ld_IR = 0;
-							R_sel = Ry;
-							bus_reg_sel = 1;
 							ld_EN = 1;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = Ry;
 							ld_sel = Rx;
-							ld_Ain = 0;
+							bus_reg_sel = 1;
+							bus_Gout_sel = 0;
+							bus_DIN_sel = 0;
 							Done = 1;
 						end
 						MVI: begin
+							Clear = 0;
 							ld_IR = 0;
-							R_sel = 8'bxxxx_xxxx;
-							BusWires = DIN;
 							ld_EN = 1;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
 							ld_sel = Rx;
-							ld_Ain = 0;
+							bus_reg_sel = 0;
+							bus_Gout_sel = 0;
+							bus_DIN_sel = 1;
 							Done = 1;
 						end
 						ADD: begin
+							Clear = 0;
 							ld_IR = 0;
-							R_sel = Rx;
 							ld_EN = 0;
+							ld_A = 1;
+							ld_G = 0;
+							R_sel = Rx;
 							ld_sel = 8'bxxxx_xxxx;
-							ld_Ain = 1;
+							bus_reg_sel = 1;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 						SUB: begin
+							Clear = 0;
 							ld_IR = 0;
-							R_sel = Rx;
 							ld_EN = 0;
+							ld_A = 1;
+							ld_G = 0;
+							R_sel = Rx;
 							ld_sel = 8'bxxxx_xxxx;
-							ld_Ain = 1;
-							
+							bus_reg_sel = 1;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 						default: begin
-							ld_Ain = 1'bx;
-							ld_R = 1'bx;
+							Clear = 0;
+							ld_IR = 0;
 							ld_EN = 0;
-
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
 							ld_sel = 8'bxxxx_xxxx;
+							bus_reg_sel = 0;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 					endcase
 				2'b10: //define signals in time step 2
 					case (Opcode)
-						MV: begin
-							/*set zero*/
-							ld_IR = 0;
-							ld_EN = 0;
-							ld_sel = 8'bxxxx_xxxx;
-							ld_Ain = 0;
-							ld_G = 0;
-						end
-						MVI: begin
-							/*set zero*/
-							ld_IR = 0;
-							ld_EN = 0;
-							ld_sel = 8'bxxxx_xxxx;
-							
-							ld_Ain = 0;
-							ld_G = 0;
-						end 
 						ADD: begin
-							// cycle 2 we place Ry on the bus
-							R_sel = Ry;
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 0;
+							ld_A = 0;
 							ld_G = 1;
+							R_sel = Ry;
+							ld_sel = 8'bxxxx_xxxx;
+							bus_reg_sel = 1;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 						SUB: begin
-							
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 0;
+							ld_A = 0;
+							ld_G = 1;
+							R_sel = Ry;
+							ld_sel = 8'bxxxx_xxxx;
+							bus_reg_sel = 1;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 						default: begin
-							
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 0;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
+							ld_sel = 8'bxxxx_xxxx;
+							bus_reg_sel = 0;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
 						end
 					endcase
 				2'b11: //define signals in time step 3
 					case (Opcode)
-						MV: begin
-							
-						end
-						MVI: begin
-							
-						end
 						ADD: begin
-							
-						end
-						SUB: begin
-							BusWires = G_out;
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 1;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
 							ld_sel = Rx;
+							bus_reg_sel = 0;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 1;
 							Done = 1;
 						end
-						default:
+						SUB: begin
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 1;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
+							ld_sel = Rx;
+							bus_reg_sel = 0;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 1;
+							Done = 1;
+						end
+						default: begin
+							Clear = 0;
+							ld_IR = 0;
+							ld_EN = 0;
+							ld_A = 0;
+							ld_G = 0;
+							R_sel = 8'bxxxx_xxxx;
+							ld_sel = 8'bxxxx_xxxx;
+							bus_reg_sel = 0;
+							bus_DIN_sel = 0;
+							bus_Gout_sel = 0;
+							Done = 0;
+						end
 					endcase
 			endcase
 		end
+		else begin
+				Clear = 0;
+				ld_IR = 0;
+				ld_EN = 0;
+				ld_A = 0;
+				ld_G = 0;
+				R_sel = 8'bxxxx_xxxx;
+				ld_sel = 8'bxxxx_xxxx;
+				bus_reg_sel = 0;
+				bus_DIN_sel = 0;
+				bus_Gout_sel = 0;
+				Done = 0;			
+		end
 	end
 
-	// assign R_sel = X_sel? Rx: Ry ;
 	/************************** BUS mux ********************************/
 	always @ (*) begin
 		if (bus_reg_sel) begin
 			case(R_sel) 
-				8'b0000_0000: BusWires = R0;
+				8'b0000_0001: BusWires = R0;
 				8'b0000_0010: BusWires = R1; 
 				8'b0000_0100: BusWires = R2;
 				8'b0000_1000: BusWires = R3;
@@ -163,6 +239,7 @@ module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
 				8'b0010_0000: BusWires = R5;
 				8'b0100_0000: BusWires = R6;
 				8'b1000_0000: BusWires = R7;
+				default: BusWires = 8'bxxxx_xxxx;
 			endcase
 		end
 		else if (bus_Gout_sel) begin
@@ -176,17 +253,20 @@ module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
 	end	
 
 	/************************* Register Load Enable ********************/
-	always @ (*)
-		case(ld_sel)
-			8'b0000_0000: ld_R[0] = ld_EN;
-			8'b0000_0010: ld_R[1] = ld_EN; 
-			8'b0000_0100: ld_R[2] = ld_EN;
-			8'b0000_1000: ld_R[3] = ld_EN;
-			8'b0001_0000: ld_R[4] = ld_EN;
-			8'b0010_0000: ld_R[5] = ld_EN;
-			8'b0100_0000: ld_R[6] = ld_EN;
-			8'b1000_0000: ld_R[7] = ld_EN;
-		endcase
+	always @ (*) begin
+		if (ld_EN) ld_R = ld_sel;
+		/*case(ld_sel)
+			8'b0000_0001: ld_R = (ld_EN)? 8'b0000_0001: 8'b0000_0000;
+			8'b0000_0010: ld_R = (ld_EN)? 8'b0000_0010: 8'b0000_0000; 
+			8'b0000_0100: ld_R = (ld_EN)? 8'b0000_0100: 8'b0000_0000;
+			8'b0000_1000: ld_R = (ld_EN)? 8'b0000_1000: 8'b0000_0000;
+			8'b0001_0000: ld_R = (ld_EN)? 8'b0001_0000: 8'b0000_0000;
+			8'b0010_0000: ld_R = (ld_EN)? 8'b0010_0000: 8'b0000_0000;
+			8'b0100_0000: ld_R = (ld_EN)? 8'b0100_0000: 8'b0000_0000;
+			8'b1000_0000: ld_R = (ld_EN)? 8'b1000_0000: 8'b0000_0000;
+			default: ld_R = 8'b0000_0000;
+		endcase*/
+		else ld_R = 8'b0000_0000;
 	end
 
 	/**************************** Registers ***************************/
@@ -198,10 +278,10 @@ module proc (DIN, Resetn, Clock, Run, Done, BusOutput);
 	regn R_5 (BusWires, ld_R[5], Clock, R5);
 	regn R_6 (BusWires, ld_R[6], Clock, R6);
 	regn R_7 (BusWires, ld_R[7], Clock, R7);
-	regn A_in(BusWires, ld_Ain, Clock, Ain);
-	regn #(.n(9)) R_IR (DIN, ld_IR, Clock, IR);
+	regn A   (BusWires, ld_A,    Clock, Aout);
+	regn #(.n(9)) R_IR (DIN[15 : 7], ld_IR, Clock, IR);
 	regn G   (ALU_out,  ld_G, Clock, G_out);
-	/**************************** ALU **************************/
-	ALU  alu (Ain, BusWires, AddSub, ALU_out);
+	/**************************** ALU ***************************/
+	ALU  alu (Aout, BusWires, AddSub, ALU_out);
 	assign BusOutput = BusWires;
 endmodule
